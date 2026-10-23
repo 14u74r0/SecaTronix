@@ -1,0 +1,63 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.15
+    container_name: secasmart_mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+
+  postgres:
+    image: postgres:15
+    container_name: secasmart_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-secasmart}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secasmart}
+      POSTGRES_DB: ${POSTGRES_DB:-secasmart}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+
+  nodered:
+    image: nodered/node-red:3.1.0
+    container_name: secasmart_nodered
+    restart: unless-stopped
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodered_data:/data
+      - ./nodered/flows.json:/data/flows.json
+    environment:
+      - TZ=UTC
+    depends_on:
+      - mosquitto
+      - postgres
+
+  grafana:
+    image: grafana/grafana:10.1.5
+    container_name: secasmart_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - postgres
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  postgres_data:
+  nodered_data:
+  grafana_data:
