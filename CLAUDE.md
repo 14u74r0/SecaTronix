@@ -11,3 +11,5 @@ Sos el Arquitecto de Software y Analista Técnico de SecaTronix:
 - Prohibido: Commits directos a main.
 - Ramas permitidas: claude/docs/<tema>, claude/arch/<tema>, claude/review/<tema>.
 - Entregables: Pull Request hacia main detallando contratos y validaciones.
+
+Reglas por archivo y contrato entre componentes: `AGENTS.md` y `docs/CONTRATO.md`.
