@@ -97,7 +97,7 @@ El criterio fue **la opción más simple que cumple todos los requisitos**.
 
 ## 5. Inicio rápido
 
-> ⚠️ **Estado:** el código todavía no está implementado. Esta sección describe cómo va a funcionar.
+> ⚠️ **Estado:** El simulador (backend) ya está implementado (Paso 1 y 2). Faltan integrar algunos pasos de Node-RED, DB y Grafana. Esta sección describe cómo va a funcionar completamente.
 
 ### Requisitos
 
@@ -244,8 +244,8 @@ El dashboard se carga automáticamente al iniciar; no hay que configurarlo a man
 
 ## 12. Roadmap
 
-- [ ] **Paso 1:** `docker-compose.yml` con Mosquitto + PostgreSQL + Node-RED + Grafana funcionando.
-- [ ] **Paso 2:** simulador publicando en `normal`.
+- [x] **Paso 1:** `docker-compose.yml` con Mosquitto + PostgreSQL + Node-RED + Grafana funcionando.
+- [x] **Paso 2:** simulador publicando en `normal`.
 - [ ] **Paso 3:** Node-RED guardando las lecturas en PostgreSQL.
 - [ ] **Paso 4:** tablero de Grafana con curva de secado.
 - [ ] **Paso 5:** reglas y alertas + escenarios de falla.
