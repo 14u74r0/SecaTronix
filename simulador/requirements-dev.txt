@@ -1,0 +1,6 @@
+# Requirements for testing
+pytest==7.4.2
+pytest-mock==3.11.1
+
+# How to run tests:
+# PYTHONPATH=simulador python -m pytest simulador/secasmart/tests
