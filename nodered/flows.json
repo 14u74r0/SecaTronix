@@ -1,1 +1,319 @@
-[]
+[
+  {
+    "id": "tab_secasmart",
+    "type": "tab",
+    "label": "SecaSmart",
+    "disabled": false,
+    "info": "Ingesta MQTT → validación → lote → PostgreSQL, reglas de alerta → tabla alertas + MQTT. Ver docs/CONTRATO.md."
+  },
+  {
+    "id": "cfg_mqtt",
+    "type": "mqtt-broker",
+    "name": "Mosquitto",
+    "broker": "mosquitto",
+    "port": "1883",
+    "clientid": "nodered-secasmart",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "closeTopic": "",
+    "willTopic": "",
+    "birthQos": "0",
+    "closeQos": "0",
+    "willQos": "0"
+  },
+  {
+    "id": "cfg_pg",
+    "type": "postgreSQLConfig",
+    "name": "PostgreSQL",
+    "host": "POSTGRES_HOST",
+    "hostFieldType": "env",
+    "port": "POSTGRES_PORT",
+    "portFieldType": "env",
+    "database": "POSTGRES_DB",
+    "databaseFieldType": "env",
+    "ssl": "false",
+    "sslFieldType": "bool",
+    "applicationName": "secasmart-nodered",
+    "applicationNameType": "str",
+    "max": "10",
+    "maxFieldType": "num",
+    "idle": "1000",
+    "idleFieldType": "num",
+    "connectionTimeout": "10000",
+    "connectionTimeoutFieldType": "num",
+    "userFieldType": "env",
+    "userEnv": "POSTGRES_USER",
+    "passwordFieldType": "env",
+    "passwordEnv": "POSTGRES_PASSWORD"
+  },
+  {
+    "id": "in_mqtt",
+    "type": "mqtt in",
+    "z": "tab_secasmart",
+    "name": "secadero/+/+/+",
+    "topic": "secadero/+/+/+",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "cfg_mqtt",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 150,
+    "y": 100,
+    "wires": [
+      [
+        "fn_validar"
+      ]
+    ]
+  },
+  {
+    "id": "fn_validar",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Validar lectura",
+    "func": "// Validar y normalizar una lectura MQTT (contrato: contratos/lectura.schema.json).\n// Entrada : msg.topic, msg.payload (objeto JSON ya parseado por el nodo mqtt-in).\n// Salida 1: msg.lectura = {ts (ms epoch), camara, nodo, variable, valor}  → lectura válida\n// Salida 2: {payload:{motivo, topic}}                                    → lectura descartada\nconst VARIABLES = {\n    temp_aire:      { min: 0, max: 120, unidad: '°C' },\n    hr_aire:        { min: 0, max: 100, unidad: '%' },\n    humedad_madera: { min: 0, max: 100, unidad: '%' },\n};\n\nfunction descartar(motivo) {\n    const n = (flow.get('descartadas') || 0) + 1;\n    flow.set('descartadas', n);\n    if (n === 1 || n % 100 === 0) {\n        node.warn(`Lectura descartada (${n} en total): ${motivo} — topic=${msg.topic}`);\n    }\n    return [null, { payload: { motivo, topic: msg.topic } }];\n}\n\nconst p = msg.payload;\nif (p === null || typeof p !== 'object' || Array.isArray(p)) return descartar('payload no es un objeto JSON');\n\nconst claves = ['ts', 'camara', 'nodo', 'variable', 'valor', 'unidad'];\nfor (const k of claves) {\n    if (!(k in p)) return descartar(`falta el campo \"${k}\"`);\n}\nif (typeof p.camara !== 'string' || !/^c[0-9]{2}$/.test(p.camara)) return descartar('camara inválida');\nif (typeof p.nodo !== 'string' || !/^n[0-9]{2}$/.test(p.nodo)) return descartar('nodo inválido');\n\nconst def = VARIABLES[p.variable];\nif (!def) return descartar(`variable desconocida: ${p.variable}`);\nif (p.unidad !== def.unidad) return descartar(`unidad inválida para ${p.variable}: ${p.unidad}`);\n\nif (typeof p.valor !== 'number' || !Number.isFinite(p.valor)) return descartar('valor no numérico');\nif (p.valor < def.min || p.valor > def.max) {\n    return descartar(`valor fuera de rango para ${p.variable}: ${p.valor} (válido ${def.min}–${def.max})`);\n}\n\nconst ts = typeof p.ts === 'string' ? Date.parse(p.ts) : NaN;\nif (Number.isNaN(ts)) return descartar('ts inválido');\n\nif (msg.topic !== `secadero/${p.camara}/${p.nodo}/${p.variable}`) {\n    return descartar('el topic no coincide con el payload');\n}\n\nmsg.lectura = { ts, camara: p.camara, nodo: p.nodo, variable: p.variable, valor: p.valor };\nreturn [msg, null];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 100,
+    "wires": [
+      [
+        "fn_lote"
+      ],
+      [
+        "dbg_descartadas"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_descartadas",
+    "type": "debug",
+    "z": "tab_secasmart",
+    "name": "Descartadas",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 590,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "fn_lote",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Asignar lote (caché 30 s)",
+    "func": "// Asignar el lote activo de la cámara. El lote se cachea 30 s para no consultar la base en cada mensaje.\n// Salida 1: lote en caché → sigue el flujo (msg.lote).\n// Salida 2: sin caché      → va a la consulta SQL (msg.query / msg.params).\nconst TTL_MS = 30000;\nconst cache = flow.get('lotes') || {};\nconst c = cache[msg.lectura.camara];\nif (c && Date.now() - c.cargado < TTL_MS) {\n    msg.lote = c.lote;\n    return [msg, null];\n}\nmsg.query = 'SELECT l.id, l.lote, l.especie, l.humedad_inicial, l.humedad_objetivo, l.k_esperada, ' +\n            '(SELECT min(ts) FROM lecturas WHERE lote_id = l.id) AS t0 ' +\n            'FROM lotes l WHERE l.camara = $1 AND l.fecha_fin IS NULL';\nmsg.params = [msg.lectura.camara];\nreturn [null, msg];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 590,
+    "y": 100,
+    "wires": [
+      [
+        "fn_insert",
+        "fn_reglas"
+      ],
+      [
+        "pg_lote"
+      ]
+    ]
+  },
+  {
+    "id": "pg_lote",
+    "type": "postgresql",
+    "z": "tab_secasmart",
+    "name": "Lote activo",
+    "query": "-- La consulta llega en msg.query y los parámetros ($1, $2…) en msg.params",
+    "postgreSQLConfig": "cfg_pg",
+    "split": false,
+    "rowsPerMsg": 1,
+    "outputs": 1,
+    "x": 830,
+    "y": 160,
+    "wires": [
+      [
+        "fn_lote_cache"
+      ]
+    ]
+  },
+  {
+    "id": "fn_lote_cache",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Guardar lote en caché",
+    "func": "// Recibe el resultado de la consulta del lote activo y lo guarda en caché.\n// Si la cámara no tiene lote activo la lectura se descarta (se avisa, sin inundar el log).\nconst filas = msg.payload;\nif (!Array.isArray(filas) || filas.length === 0) {\n    const n = (flow.get('sin_lote') || 0) + 1;\n    flow.set('sin_lote', n);\n    if (n === 1 || n % 100 === 0) {\n        node.warn(`La cámara ${msg.lectura.camara} no tiene lote activo; lectura descartada (${n}). ` +\n                  `Crear uno con: SELECT nuevo_lote('${msg.lectura.camara}', 'L-XXXX', 'pino');`);\n    }\n    return null;\n}\nconst r = filas[0];\nconst lote = {\n    id: r.id,\n    nombre: r.lote,\n    especie: r.especie,\n    hIni: Number(r.humedad_inicial),\n    hObj: Number(r.humedad_objetivo),\n    k: Number(r.k_esperada),\n    // Instante de referencia de la curva esperada: primera lectura del lote (o esta, si es la primera).\n    t0: r.t0 ? new Date(r.t0).getTime() : msg.lectura.ts,\n};\nconst cache = flow.get('lotes') || {};\ncache[msg.lectura.camara] = { lote, cargado: Date.now() };\nflow.set('lotes', cache);\n\nmsg.lote = lote;\ndelete msg.query;\ndelete msg.params;\nmsg.payload = undefined;\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1060,
+    "y": 160,
+    "wires": [
+      [
+        "fn_insert",
+        "fn_reglas"
+      ]
+    ]
+  },
+  {
+    "id": "fn_insert",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Preparar INSERT lectura",
+    "func": "// Arma el INSERT de la lectura en la tabla lecturas.\nconst L = msg.lectura;\nmsg.query = 'INSERT INTO lecturas (ts, lote_id, camara, nodo, variable, valor) VALUES ($1, $2, $3, $4, $5, $6)';\nmsg.params = [new Date(L.ts).toISOString(), msg.lote.id, L.camara, L.nodo, L.variable, L.valor];\nreturn msg;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 830,
+    "y": 240,
+    "wires": [
+      [
+        "pg_insert_lectura"
+      ]
+    ]
+  },
+  {
+    "id": "pg_insert_lectura",
+    "type": "postgresql",
+    "z": "tab_secasmart",
+    "name": "INSERT lecturas",
+    "query": "-- La consulta llega en msg.query y los parámetros ($1, $2…) en msg.params",
+    "postgreSQLConfig": "cfg_pg",
+    "split": false,
+    "rowsPerMsg": 1,
+    "outputs": 1,
+    "x": 1070,
+    "y": 240,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "fn_reglas",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Reglas de alerta",
+    "func": "// Reglas de alerta (docs/CONTRATO.md §3). Mantiene el estado por cámara en el contexto del nodo.\n// Entrada : msg.lectura + msg.lote\n// Salida 1: array de alertas {payload:{ts,camara,lote_id,severidad,mensaje}, regla}\nconst CFG = {\n    FRESCO_S: 30,          // una lectura sirve para comparar nodos si es de los últimos 30 s\n    COOLDOWN_S: 60,        // no repetir la misma alerta antes de 60 s (salvo que escale a roja)\n    REPETICIONES: 10,      // valores idénticos seguidos → dato sospechoso\n    MIN_NODOS: 3,          // mínimo de nodos con dato fresco para comparar\n    DIF_NODOS: 2,          // puntos de humedad entre nodos → amarilla\n    DESVIO_AMARILLA: 3,    // puntos contra la curva esperada\n    DESVIO_ROJA: 6,\n    DESVIO_HR: 15,         // puntos de HR sobre lo esperado → falla de ventilador (roja)\n};\nconst SIM_SPEED = parseFloat(env.get('SIM_SPEED')) || 1;\nconst RANGO = { amarilla: 1, roja: 2 };\n\nconst L = msg.lectura;\nconst lote = msg.lote;\nconst estado = context.get('estado') || {};\nconst cam = estado[L.camara] = estado[L.camara] || { valores: {}, rep: {}, alertas: {} };\ncontext.set('estado', estado);\n\nconst salida = [];\nfunction emitir(regla, clave, severidad, mensaje) {\n    const previa = cam.alertas[clave];\n    const permitido = !previa\n        || RANGO[severidad] > RANGO[previa.severidad]\n        || (L.ts - previa.ts) >= CFG.COOLDOWN_S * 1000;\n    if (!permitido) return;\n    cam.alertas[clave] = { severidad, ts: L.ts };\n    salida.push({\n        regla,\n        payload: { ts: new Date(L.ts).toISOString(), camara: L.camara, lote_id: lote.id, severidad, mensaje },\n    });\n}\n\n// Curva esperada: H(t) = obj + (ini - obj) * exp(-k * SIM_SPEED * t); HR esperada ligada a la humedad.\nfunction esperado() {\n    const t = Math.max(0, (L.ts - lote.t0) / 1000);\n    const h = lote.hObj + (lote.hIni - lote.hObj) * Math.exp(-lote.k * SIM_SPEED * t);\n    const avance = 1 - (h - lote.hObj) / (lote.hIni - lote.hObj);   // 0 → 1\n    return { h, hr: 95 - 65 * avance };\n}\nconst f1 = (x) => x.toFixed(1);\n\n// Valores frescos (último de cada nodo) de una variable.\nfunction frescos(variable) {\n    const lim = L.ts - CFG.FRESCO_S * 1000;\n    const out = [];\n    for (const k of Object.keys(cam.valores)) {\n        const v = cam.valores[k];\n        if (v.variable === variable && v.ts >= lim) out.push(v);\n    }\n    return out;\n}\n\n// 1) Registrar la lectura y detectar valor repetido (dato sospechoso).\nconst key = `${L.nodo}|${L.variable}`;\ncam.valores[key] = { nodo: L.nodo, variable: L.variable, valor: L.valor, ts: L.ts };\nconst rep = cam.rep[key] = cam.rep[key] || { ultimo: null, n: 0 };\nif (rep.ultimo === L.valor) { rep.n += 1; } else { rep.ultimo = L.valor; rep.n = 1; }\nif (rep.n >= CFG.REPETICIONES) {\n    emitir('dato_sospechoso', `dato_sospechoso|${key}`, 'amarilla',\n        `Sensor ${L.nodo}: ${L.variable} repite el valor ${L.valor} en ${rep.n} lecturas seguidas (dato sospechoso)`);\n}\n\n// 2) Reglas sobre la humedad de la madera.\nif (L.variable === 'humedad_madera') {\n    const fs = frescos('humedad_madera');\n    if (fs.length >= CFG.MIN_NODOS) {\n        let max = fs[0], min = fs[0], suma = 0;\n        for (const v of fs) { if (v.valor > max.valor) max = v; if (v.valor < min.valor) min = v; suma += v.valor; }\n        const prom = suma / fs.length;\n\n        const dif = max.valor - min.valor;\n        if (dif > CFG.DIF_NODOS) {\n            emitir('diferencia_nodos', 'diferencia_nodos', 'amarilla',\n                `Diferencia de humedad entre nodos: ${f1(dif)} puntos (${max.nodo}=${f1(max.valor)} %, ${min.nodo}=${f1(min.valor)} %)`);\n        }\n\n        const esp = esperado();\n        const desvio = prom - esp.h;\n        const ad = Math.abs(desvio);\n        if (ad > CFG.DESVIO_AMARILLA) {\n            const sev = ad > CFG.DESVIO_ROJA ? 'roja' : 'amarilla';\n            emitir('desvio_curva', 'desvio_curva', sev,\n                `Humedad promedio ${f1(prom)} % se desvía ${desvio > 0 ? '+' : ''}${f1(desvio)} puntos de la curva esperada (${f1(esp.h)} %)`);\n        }\n    }\n}\n\n// 3) Falla de ventilador: la humedad del aire sube sobre lo esperado.\nif (L.variable === 'hr_aire') {\n    const fs = frescos('hr_aire');\n    if (fs.length >= CFG.MIN_NODOS) {\n        const prom = fs.reduce((a, v) => a + v.valor, 0) / fs.length;\n        const esp = esperado();\n        if (prom - esp.hr > CFG.DESVIO_HR) {\n            emitir('falla_ventilador', 'falla_ventilador', 'roja',\n                `Humedad del aire promedio ${f1(prom)} % supera en ${f1(prom - esp.hr)} puntos lo esperado (${f1(esp.hr)} %): posible falla de ventilador`);\n        }\n    }\n}\n\nreturn salida.length ? [salida] : null;\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 830,
+    "y": 320,
+    "wires": [
+      [
+        "fn_alerta"
+      ]
+    ]
+  },
+  {
+    "id": "fn_alerta",
+    "type": "function",
+    "z": "tab_secasmart",
+    "name": "Armar alerta",
+    "func": "// Prepara cada alerta para dos destinos:\n//   Salida 1: INSERT en la tabla alertas.\n//   Salida 2: publicación MQTT en secadero/<camara>/alertas (contratos/alerta.schema.json).\nconst a = msg.payload;\nconst sql = {\n    query: 'INSERT INTO alertas (ts, lote_id, camara, regla, severidad, mensaje) VALUES ($1, $2, $3, $4, $5, $6)',\n    params: [a.ts, a.lote_id, a.camara, msg.regla, a.severidad, a.mensaje],\n};\nconst mqtt = { topic: `secadero/${a.camara}/alertas`, payload: a };\nreturn [sql, mqtt];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1040,
+    "y": 320,
+    "wires": [
+      [
+        "pg_insert_alerta"
+      ],
+      [
+        "out_alertas"
+      ]
+    ]
+  },
+  {
+    "id": "pg_insert_alerta",
+    "type": "postgresql",
+    "z": "tab_secasmart",
+    "name": "INSERT alertas",
+    "query": "-- La consulta llega en msg.query y los parámetros ($1, $2…) en msg.params",
+    "postgreSQLConfig": "cfg_pg",
+    "split": false,
+    "rowsPerMsg": 1,
+    "outputs": 1,
+    "x": 1260,
+    "y": 300,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "out_alertas",
+    "type": "mqtt out",
+    "z": "tab_secasmart",
+    "name": "secadero/<camara>/alertas",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "cfg_mqtt",
+    "x": 1290,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "catch_all",
+    "type": "catch",
+    "z": "tab_secasmart",
+    "name": "Errores",
+    "scope": null,
+    "uncaught": false,
+    "x": 150,
+    "y": 440,
+    "wires": [
+      [
+        "dbg_errores"
+      ]
+    ]
+  },
+  {
+    "id": "dbg_errores",
+    "type": "debug",
+    "z": "tab_secasmart",
+    "name": "Errores",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "x": 350,
+    "y": 440,
+    "wires": []
+  }
+]
