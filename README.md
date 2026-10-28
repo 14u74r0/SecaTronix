@@ -246,7 +246,7 @@ El dashboard se carga automáticamente al iniciar; no hay que configurarlo a man
 
 - [x] **Paso 1:** `docker-compose.yml` con Mosquitto + PostgreSQL + Node-RED + Grafana funcionando.
 - [x] **Paso 2:** simulador publicando en `normal`.
-- [ ] **Paso 3:** Node-RED guardando las lecturas en PostgreSQL.
+- [x] **Paso 3:** Node-RED guardando las lecturas en PostgreSQL.
 - [ ] **Paso 4:** tablero de Grafana con curva de secado.
 - [ ] **Paso 5:** reglas y alertas + escenarios de falla.
 - [ ] **Paso 6:** documentación final, capturas de pantalla y demo.
