@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: secasmart
+    database: secasmart
+    secureJsonData:
+      password: secasmart
+    jsonData:
+      sslmode: 'disable'
+      postgresVersion: 1500
+    isDefault: true
+    editable: true
